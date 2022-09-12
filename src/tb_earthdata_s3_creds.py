@@ -22,20 +22,21 @@ def assemble_event():
 
 def retrieve_credentials(event):
     """Makes the Oauth calls to authenticate with EDS and return a set of s3
-    same-region, read-only credntials.
+    same-region, read-only credentials.
     """
     login_resp = requests.get(
         event['s3_endpoint'], allow_redirects=False
     )
+
     login_resp.raise_for_status()
 
     auth = f"{event['edl_username']}:{event['edl_password']}"
-    encoded_auth  = base64.b64encode(auth.encode('ascii'))
+    encoded_auth = base64.b64encode(auth.encode('ascii'))
 
     auth_redirect = requests.post(
         login_resp.headers['location'],
-        data = {"credentials": encoded_auth},
-        headers= { "Origin": event['s3_endpoint'] },
+        data={"credentials": encoded_auth},
+        headers={"Origin": event['s3_endpoint']},
         allow_redirects=False
     )
     auth_redirect.raise_for_status()
@@ -86,17 +87,17 @@ def main():
 
     #print(client.get_bucket_policy(Bucket=bucket))
 
-    obj_list = client.list_objects_v2(Bucket=bucket,
-                                      Delimiter=',',
-                                      EncodingType='url',
-                                      MaxKeys=1,
-                                      Prefix='HLSS30.020/HLS.S30.T14TPL.2015334T173002.v2.0/')
+    #obj_list = client.list_objects_v2(Bucket=bucket,
+    #                                  Delimiter=',',
+    #                                  EncodingType='url',
+    #                                  MaxKeys=1,
+    #                                  Prefix='HLSS30.020/HLS.S30.T14TPL.2015334T173002.v2.0/')
 
-    print(obj_list)
+    #print(obj_list)
 
-    #client.download_file(Bucket='lp-prod-protected',
-    #                     Key=file_key,
-    #                     Filename=str(download_path))
+    client.download_file(Bucket='lp-prod-protected',
+                         Key=file_key,
+                         Filename=str(download_path))
 
     #print(object)
 

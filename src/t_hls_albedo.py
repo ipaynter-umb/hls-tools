@@ -139,23 +139,20 @@ class HLSDataset:
         # Return latest date
         return latest_date
 
-    # Takes a MGSR tile major row and column, and a datetime date object.
-    def get_relevant_tiles(self, mgrs_row, mgrs_col, date):
+    # Takes a MGSR tile designation, and a datetime date object.
+    def get_relevant_tiles(self, mgrs_cell, date):
+        # Split out the MGSR cell designation into its components
+        major_row, major_col, minor_row, minor_col = get_mgrs_components(mgrs_cell)
         # Tile files
         tile_files = []
         # Set the current row and column
-        curr_row = mgrs_row
-        curr_col = mgrs_col
+        curr_row = major_row
+        curr_col = major_col
         # Stacks for the ongoing searches
         to_search_northward = [f'{curr_col}{curr_row}']
         to_search_westward = [f'{curr_col}{curr_row}']
         to_search_eastward = [f'{curr_col}{curr_row}']
         to_search_southward = [f'{curr_col}{curr_row}']
-
-        print(to_search_northward,
-              to_search_southward,
-              to_search_westward,
-              to_search_eastward)
 
         # Check for other tiles in the same major tile as the target
         files_list = self.check_for_files(f'{curr_col}{curr_row}', date)
@@ -191,12 +188,6 @@ class HLSDataset:
                         # Add it
                         tile_files.append(file)
 
-        print(to_search_northward,
-              to_search_southward,
-              to_search_westward,
-              to_search_eastward)
-        print(tile_files)
-
         # While we are still looking southward
         while len(to_search_southward) > 0:
             # Pop a tile from the southward search stack
@@ -224,12 +215,6 @@ class HLSDataset:
                         # Add it
                         tile_files.append(file)
 
-        print(to_search_northward,
-              to_search_southward,
-              to_search_westward,
-              to_search_eastward)
-        print(tile_files)
-
         # While we are still looking westward
         while len(to_search_westward) > 0:
             # Pop a tile from the westward search stack
@@ -252,12 +237,6 @@ class HLSDataset:
                     if file not in tile_files:
                         # Add it
                         tile_files.append(file)
-
-        print(to_search_northward,
-              to_search_southward,
-              to_search_westward,
-              to_search_eastward)
-        print(tile_files)
 
         # While we are still looking eastward
         while len(to_search_eastward) > 0:
@@ -282,12 +261,6 @@ class HLSDataset:
                         # Add it
                         tile_files.append(file)
 
-        print(to_search_northward,
-              to_search_southward,
-              to_search_westward,
-              to_search_eastward)
-        print(tile_files)
-
         return tile_files
 
     # Check for files for a particular tile
@@ -303,7 +276,6 @@ class HLSDataset:
             if doy in self.by_date[year].keys():
                 # For each file
                 for file in self.by_date[year][doy]:
-                    print(f'Checking {file} against {tile}')
                     # Get the file's tile
                     file_tile = file.split('.')[2][1:4]
                     # If the (major) tile matches
@@ -312,6 +284,171 @@ class HLSDataset:
                         files_list.append(file)
         # Return the list
         return files_list
+
+    # Check for slivers of the same minor cell in another major cell
+    def check_for_slivers(self, target_cell, date):
+        # List for cross-boundary cells
+        cell_list = []
+        # Get the DOY as a string
+        doy = zero_pad_number(get_doy_from_date(date), digits=2)
+        # Get list of northward and southward cells
+        northward_cells, southward_cells = get_northward_and_southward_cells(target_cell)
+        # For each file on the target date
+        for file in self.by_date[str(date.year)][doy]:
+            # Get the MGRS grid cell from the file name
+            cell = get_tile_from_file(file)
+            # If the cell is a complete match
+            if cell == target_cell:
+                # This is the target cell, skip it
+                continue
+            # If the cell name is in the northwards cells
+            if cell in northward_cells:
+                # Add the cell to the cell list
+                cell_list.append(cell)
+            # Otherwise, if the cell name is in the southward cells
+            elif cell in southward_cells:
+                # Add the cell to the cell list
+                cell_list.append(cell)
+        # Return the cell list
+        return cell_list
+
+    # Get the MGRS files relevant to the strip of target MGRS minor grid cell
+    def get_relevant_strip_tiles(self, mgrs_cell, date):
+        # Check for slivers
+        self.check_for_slivers(mgrs_cell, date)
+
+    # Generate strip targets from this dataset
+    def generate_strip_targets(self):
+        # Make an organizer
+        organizer = HLSStripOrganizer()
+        # For each year
+        for year in self.by_date.keys():
+            # For each doy
+            for doy in self.by_date[year].keys():
+                # For each file
+                for file in self.by_date[year][doy]:
+                    # If the file is not already in the organizer dictionary
+                    if file not in organizer.by_file.keys():
+                        # Get the date
+                        date = datetime.date(year=int(year), day=1, month=1) + datetime.timedelta(days=int(doy) - 1)
+                        # Add the file with a new target strip
+                        organizer.by_file[file] = HLSTargetStrip(date)
+                        # Reference the strip object
+                        strip = organizer.by_file[file]
+                        # Add the file to the strip
+                        strip.files.append(file)
+                        # Get the cell from the file
+                        cell = get_tile_from_file(file)
+                        # Stacks for the ongoing searches
+                        to_search_westward = [cell]
+                        to_search_eastward = [cell]
+                        # Check for slivers that overlap into other northward and southward major cells
+                        overlap_slivers = self.check_for_slivers(cell, date)
+                        # For each sliver
+                        for sliver in overlap_slivers:
+                            # Add to the slivers in the strip
+                            strip.files.append(sliver)
+                            # Reference the strip in the organizer
+                            organizer.by_file[sliver] = strip
+                            # Add the slivers to the westward and eastward searches
+                            to_search_eastward.append(sliver)
+                            to_search_westward.append(sliver)
+                        # While the eastward stack yet lives
+                        while len(to_search_eastward) > 0:
+                            # Pop a cell from the eastward search stack
+                            curr_cell = to_search_eastward.pop()
+                            # Get the components of the tile
+                            curr_row, curr_col, curr_minor_row, curr_minor_col = get_mgrs_components(curr_cell)
+                            # For each eastward tile
+                            for tile in move_minor_eastwards(curr_cell):
+                                pass
+                                # Get any files
+                                #files_list = self.check_for_files(tile, date)
+                                # If there was at least one file
+                                #if len(files_list) > 0:
+                                    # Add the tile to the relevant stacks for further searching
+                                    #if tile not in to_search_eastward:
+                                     #   to_search_eastward.append(tile)
+                                # For each file in the list
+                                #for file in files_list:
+                                    # If it is not already in the tile files list
+                                    #if file not in tile_files:
+                                        # Add it
+                                        #tile_files.append(file)
+
+
+# Class for HLS processing targets
+class HLSTargetStrip:
+
+    def __init__(self, date):
+
+        self.date = date
+        self.files = []
+        self.northward_files = []
+        self.southward_files = []
+
+
+# Class for HLS processing organization
+class HLSStripOrganizer:
+
+    def __init__(self):
+
+        self.by_file = {}
+
+
+# Split an MGRS cell into its components (major and minor rows and cols)
+def get_mgrs_components(cell):
+    # Split out the components
+    minor_row = cell[-1]
+    minor_col = cell[-2]
+    major_row = cell[-3]
+    major_col = cell[0:2]
+
+    return major_row, major_col, minor_row, minor_col
+
+def get_northward_and_southward_cells(target_cell):
+    # Get the target components
+    target_row, target_col, target_minor_row, target_minor_col = get_mgrs_components(target_cell)
+    # Lists  for northward and southward cells
+    northward_cells = []
+    southward_cells = []
+    # Get the northwards major cell(s)
+    northward_major_cells = move_northwards(target_row, target_col)
+    # For each northward major cell (typically one)
+    for northwards_cell in northward_major_cells:
+        # Add the name to the northward cells list
+        northward_cells.append(northwards_cell + f'{target_minor_col}{target_minor_row}')
+    # Get the southwards major cell(s)
+    southward_major_cells = move_southwards(target_row, target_col)
+    # For each southward major cell (typically one)
+    for southwards_cell in southward_major_cells:
+        # Add the name to the southward cells list
+        southward_cells.append(southwards_cell + f'{target_minor_col}{target_minor_row}')
+    # Return northward and southward cells
+    return northward_cells, southward_cells
+
+
+# Returns the northwards row for a major or minor row
+def northwards_row(row):
+    # Increment the row
+    new_row = chr(ord(row) + 1)
+    # If the new row is 'I' or 'O'
+    if new_row == 'I' or new_row == 'O':
+        # Increment the row again
+        new_row = chr(ord(row) + 1)
+    return new_row
+
+
+
+# Get the tile name from an HLS file
+def get_tile_from_file(file):
+     # Return the MGRS grid cell name
+    return file.split('.')[2][1:6]
+
+
+# Get DOY from date (datetime.date object)
+def get_doy_from_date(date):
+    return (date - datetime.date(year=date.year, day=1, month=1)).days + 1
 
 
 # Takes N, S, E, or W as direction
@@ -339,8 +476,10 @@ def move_northwards(row, col):
     if exceptions:
         # Search for those instead
         return exceptions
-    # Otherwise, return the incremented tile col (+1, eastwards)
-    return [f'{col}{chr(ord(row) + 1)}']
+    # Increment the row
+    new_row = northwards_row(row)
+    # Otherwise, return the incremented tile row (+1, northwards)
+    return [f'{col}{new_row}']
 
 
 def move_southwards(row, col):
@@ -350,8 +489,14 @@ def move_southwards(row, col):
     if exceptions:
         # Search for those instead
         return exceptions
+    # Increment the row
+    new_row = chr(ord(row) - 1)
+    # If the new row is 'I' or 'O'
+    if new_row == 'I' or new_row == 'O':
+        # Increment the row again
+        new_row = chr(ord(row) - 1)
     # Otherwise, return the incremented tile col (+1, eastwards)
-    return [f'{col}{chr(ord(row) - 1)}']
+    return [f'{col}{new_row}']
 
 
 def move_eastwards(row, col):
@@ -359,10 +504,16 @@ def move_eastwards(row, col):
     exceptions = check_for_dragons(row, col, 'E')
     # If there were exceptions
     if exceptions:
-        # Search for those instead
+        # Return those instead
         return exceptions
+    # Derive the potential new col
+    new_col = zero_pad_number(int(col) + 1, digits=2)
+    # If the new col will be '61' (leaving the east edge of the grid)
+    if new_col == '61':
+        # Change it to the west-most col ('00')
+        new_col = '00'
     # Otherwise, return the incremented tile col (+1, eastwards)
-    return [f'{zero_pad_number(int(col) + 1, digits=2)}{row}']
+    return [f'{new_col}{row}']
 
 
 def move_westwards(row, col):
@@ -370,10 +521,23 @@ def move_westwards(row, col):
     exceptions = check_for_dragons(row, col, 'W')
     # If there were exceptions
     if exceptions:
-        # Search for those instead
+        # Return them
         return exceptions
+    # Derive the potential new col
+    new_col = zero_pad_number(int(col) - 1, digits=2)
+    # If the new col will be '00' (leaving the west edge of the grid)
+    if new_col == '00':
+        # Change it to the east-most col ('60')
+        new_col = '60'
     # Otherwise, return the incremented tile col (+1, eastwards)
-    return [f'{zero_pad_number(int(col) - 1, digits=2)}{row}']
+    return [f'{new_col}{row}']
+
+
+def move_minor_eastwards(cell):
+    # Get the cell components
+    row, col, minor_row, minor_col = get_mgrs_components(cell)
+    # Increment
+
 
 
 def zero_pad_number(input_number, digits=3):
@@ -397,27 +561,34 @@ def main():
 
     #catalog = HLSDataCatalog()
     catalog = HLSDataset('S30')
-    print(catalog.by_tile['U']['31']['Q']['D'][0])
-    target_file = catalog.by_tile['U']['31']['Q']['D'][0]
 
-
-    #exit()
-    #catalog = HLSDataset('S30')
-
-    #print(catalog.by_tile['U']['31']['Q']['D'][0])
-    #target_file = catalog.by_tile['U']['31']['Q']['D'][0]
-
-    #target_file = catalog.by_date['2017']['168'][3]
-    #print(target_file)
-    target_tile = target_file.split('.')[2][1:4]
-    print(target_tile)
-
+    # THIS ONE HAS 1000 files:
+    #print(catalog.by_date['2022']['123'])
+    target_file = catalog.by_date['2022']['123'][30]
     split_date = target_file.split('.')[3]
+    target_tile = target_file.split('.')[2][1:6]
+    print(target_tile)
     target_date = datetime.date(year=int(split_date[0:4]), month=1, day=1) + datetime.timedelta(days=int(split_date[4:7]) - 1)
+    tile_list = catalog.get_relevant_tiles(target_tile, target_date)
+    for tile in tile_list:
+        print(tile)
+    #exit()
 
-    for file in catalog.by_date[split_date[0:4]][split_date[4:7]]:
-        print(file)
+    # THIS ONE HAS 39 FILES
+    #target_file = catalog.by_date['2020']['178'][30]
 
+    #print(target_file)
+
+    #print(target_file)
+    #target_tile = target_file.split('.')[2][1:4]
+    #print(target_tile)
+
+    #split_date = target_file.split('.')[3]
+    #target_date = datetime.date(year=int(split_date[0:4]), month=1, day=1) + datetime.timedelta(days=int(split_date[4:7]) - 1)
+
+    #for file in catalog.by_date[split_date[0:4]][split_date[4:7]]:
+    #    print(file)
+    #print(len(catalog.by_date[split_date[0:4]][split_date[4:7]]))
     #print(catalog.get_relevant_tiles(target_tile[-1], target_tile[0:2], target_date))
 
 

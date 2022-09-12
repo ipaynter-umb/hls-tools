@@ -33,3 +33,11 @@ to_check_westwards = {
     '35X': ['33X'],
     '33X': ['31X']
 }
+
+westward_intermajor_minor = {}
+
+eastward_intermajor_minor = {}
+
+southward_intermajor_minor = {}
+
+northward_intermajor_minor = {}
